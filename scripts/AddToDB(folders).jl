@@ -1,8 +1,6 @@
 using SQLite
 using DataFrames
-
-# путь к базе
-db = SQLite.DB("configs/DBTData.sqlite")
+using Gtk
 
 #------------------------------------------------------------------------
 # Функции добавления записей в главные таблицы
@@ -66,11 +64,18 @@ function BindTag(recordname::String, tag::String, ancestor::String)
     tag_id = Int((DBInterface.execute(db, "SELECT ID FROM Tags WHERE tag_name = '$tag'
                                                                 AND ancestor = '$ancestor_id'") |> DataFrame)[1,1])
 
-    # привязка к тегу, если такой ещё не было
+    # привязка к материнскому тегу, если такой ещё не было
+    DBInterface.execute(db, "INSERT INTO TagsMap (record_id, tag_id) SELECT '$name_id', '$ancestor_id'
+                                WHERE NOT EXISTS (SELECT record_id, tag_id FROM TagsMap
+                                                                            WHERE record_id = '$name_id'
+                                                                            AND tag_id = '$ancestor_id')");
+
+    # привязка к дочернему тегу, если такой ещё не было
     DBInterface.execute(db, "INSERT INTO TagsMap (record_id, tag_id) SELECT '$name_id', '$tag_id'
                                 WHERE NOT EXISTS (SELECT record_id, tag_id FROM TagsMap
                                                                             WHERE record_id = '$name_id'
                                                                             AND tag_id = '$tag_id')");
+                                                                
 end
 
 function BindSubject(recordname::String, subject::String)
@@ -109,42 +114,79 @@ function BindPath(recordname::String, path::String)
                                                                             AND path_id = '$path_id')");
 end
 #------------------------------------------------------------------------
-new_name = ""
-new_date = ""
-new_tag = ""
-new_subject = ""
-new_path = ""
+function AddToDB(db; kwargs...)
+
+    kwargs = Dict(kwargs)
+    if haskey(kwargs, :record) record = kwargs[:record] else record = "" end
+    if haskey(kwargs, :tag) tag = kwargs[:tag] else tag = "" end
+    if haskey(kwargs, :ancestor) ancestor = kwargs[:ancestor] else ancestor = "" end
+    if haskey(kwargs, :subject) subject = kwargs[:subject] else subject = "" end
+    if haskey(kwargs, :creation_date) creation_date = kwargs[:creation_date] else creation_date = "" end
+    if haskey(kwargs, :path) path = kwargs[:path] else path = "" end
+
+    for i in 1:lastindex(record)
+        if record != ""
+            if creation_date[i] != ""
+                
+                AddRecord(record[i], creation_date[i])
+            end
+        end
+        if tag != ""
+            BindTag(record[i], tag[i], ancestor[i])
+        end
+        if subject != ""
+            BindSubject(record[i], subject[i])
+        end
+        if path != ""
+            BindPath(record[i], path[i])
+        end
+    end
+end
+# new_name = ""
+# new_date = ""
+# new_tag = ""
+# new_subject = ""
+# new_path = ""
 
 ## добавление в текст программы --------------------------------------------
-new_name = ["WD001080722154122", "WD001080722154425", "WD001080722154729",
+# путь к базе
+db = SQLite.DB("configs/DBTData.sqlite")
+
+record = ["WD001080722154122", "WD001080722154425", "WD001080722154729",
             "WD001120722184220", "WD001120722184515", "WD001120722184837",
             "WD001020822163444", "WD001020822163737", "WD001020822164219",
             "WD001120722171552", "WD001120722171829", "WD001120722172110",
             "WD001120722181247", "WD001120722182323", "WD001120722183939",
             "WD001080722160930", "WD001080722161127", "WD001080722161330"];
 
-new_date = ["08/07/2022", "08/07/2022", "08/07/2022",
+creation_date = ["08/07/2022", "08/07/2022", "08/07/2022",
             "12/07/2022", "12/07/2022", "12/07/2022",
             "02/08/2022", "02/08/2022", "02/08/2022",
             "12/07/2022", "12/07/2022", "12/07/2022",
             "12/07/2022", "12/07/2022", "12/07/2022",
             "08/07/2022", "08/07/2022", "08/07/2022"];
 
-new_tag = ["хорошая запись", "хорошая запись", "хорошая запись",
+tag = ["хорошая запись", "хорошая запись", "хорошая запись",
            "плохая запись", "плохая запись", "плохая запись", 
            "хорошая запись", "хорошая запись", "хорошая запись", 
            "плохая запись", "плохая запись", "плохая запись",
            "хорошая запись", "хорошая запись", "хорошая запись",
            "плохая запись", "плохая запись", "плохая запись"];
-new_ancestor = fill("проба с глубоким дыханием", 18);
-new_subject = ["Никита", "Никита","Никита",
+
+ancestor = fill("проба с глубоким дыханием", 18);
+
+subject = ["Никита", "Никита","Никита",
               "Катя","Катя","Катя",
               "Алексей","Алексей","Алексей",
               "Лиза", "Лиза", "Лиза",
               "Катя","Катя","Катя",
               "Катя", "Катя", "Катя"];
 
-new_path = fill("D:/ИНКАРТ/sql/data", 18);
+path = fill("D:/ИНКАРТ/sql/data", 18);
+
+AddToDB(db; record = record, creation_date = creation_date, tag = tag, ancestor = ancestor, subject = subject, path = path)
+
+# AddTag("нормальная запись", "другое исследование")
 ##--------------------------------------------------------------------------
 
 ## добавление через консоль ------------------------------------------------
@@ -160,23 +202,6 @@ new_path = fill("D:/ИНКАРТ/sql/data", 18);
 # new_path = readline()
 ##--------------------------------------------------------------------------
 
-for i in 1:lastindex(new_name)
-    if new_name[i] != ""
-        if new_date[i] != ""
-            AddRecord(new_name[i], new_date[i])
-        end
-        if new_tag[i] != ""
-            BindTag(new_name[i], new_tag[i], new_ancestor[i])
-        end
-        if new_subject[i] != ""
-            BindSubject(new_name[i], new_subject[i])
-        end
-        if new_path[i] != ""
-            BindPath(new_name[i], new_path[i])
-        end
-    end
-end
-
 # function func(;kwargs...)
 #     for (k, v) in kwargs
 #         println("$k = $v")
@@ -184,3 +209,46 @@ end
 # end
 
 # func(a=1, b=2, c=3)
+
+# function func(;kwargs...)
+#     kwargs = Dict(kwargs)
+#     if haskey(kwargs, :a)
+#         a = kwargs[:a]
+#     else 
+#         a = ""
+#     end
+
+#     if haskey(kwargs, :b)
+#         b = kwargs[:b]
+#     else
+#         b = ""
+#     end
+
+#     if haskey(kwargs, :c)
+#         c = kwargs[:c]
+#     else
+#         c = ""
+#     end
+
+#     return a, b, c
+# end
+
+# func(a=1, c=3)
+
+dir = open_dialog_native("", action=GtkFileChooserAction.SELECT_FOLDER)
+file = "WD001020822163444"
+fullname = string(dir*"\\"*file)
+creation_date = Dates.unix2datetime(mtime(test))
+
+if isdir(dir)
+    files = readdir(dir)
+end
+
+creation_dates = []
+for i in 2:length(files)-1
+    filename = files[i]
+    date = filename[6:7]*"/"*filename[8:9]*"/"*filename[10:11]
+    push!(creation_dates, date)
+end
+
+AddToDB(db; record = files[2:length(files)-1], creation_date = creation_dates)
