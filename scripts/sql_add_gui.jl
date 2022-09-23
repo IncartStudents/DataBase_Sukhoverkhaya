@@ -39,6 +39,10 @@ mutable struct Global
     ancestor_input::String
     table_data::DataFrame
     fullpath_saver::Vector{String}
+    isselected_table_data::Vector{Bool}
+    help_marker_data::String
+    need_read::Bool
+    help_marker_id::Int64
 
     function Global()
         is_gui_started = false
@@ -54,22 +58,27 @@ mutable struct Global
         ancestor_input = "\0"^100
         table_data = DataFrame()
         fullpath_saver = []
+        isselected_table_data = []
+        help_marker_data = ""
+        need_read = true
+        help_marker_id = 0
 
         new(is_gui_started, dbpath, data, 
             loaded_records, isselected, tags, 
             current_tag_item, current_tag_item_id,
             subjects, current_subject_item,
             ancestor_input, table_data,
-            fullpath_saver)
+            fullpath_saver, isselected_table_data,
+            help_marker_data, need_read, help_marker_id)
     end
 end
 
-function ShowHelpMarker(desc) # Справка
-    CImGui.TextDisabled("(?)")
+function ShowHelpMarker(symbol::String, text::String) # Справка
+    CImGui.TextDisabled(symbol)
     if CImGui.IsItemHovered()
         CImGui.BeginTooltip()
         CImGui.PushTextWrapPos(CImGui.GetFontSize() * 100.0)
-        CImGui.TextUnformatted(desc)
+        CImGui.TextUnformatted(text)
         CImGui.PopTextWrapPos()
         CImGui.EndTooltip()
     end
@@ -120,15 +129,86 @@ function DataLoad(v::Global)
         v.tags = ShowAllTags(db)
         v.subjects = ShowAllSubj(db)
         v.table_data = v.data ###!!!!! может быть проблема с поинтером
+        v.isselected_table_data = fill(false, size(v.table_data)[1])
 
         v.is_gui_started = true
     end
 end
 
-function RecordsTable(data_for_table::DataFrame, s::Renderer.GR)
+function DeleteRecords(v::Global, rec_to_delete)
+    db = SQLite.DB(v.dbpath)
+    if length(rec_to_delete) == 1
+        rec_to_delete = rec_to_delete[1]
+        DBInterface.execute(db, "DELETE FROM Records WHERE recordname = '$rec_to_delete'")
+    else
+        rec_to_delete = Tuple(String(x) for x in rec_to_delete)
+        DBInterface.execute(db, "DELETE FROM Records WHERE recordname IN $rec_to_delete")
+    end
+    v.is_gui_started = false
+    Clean(v)
+end
+
+function DeleteAllRecordsButton(v::Global)
+    if CImGui.Button("Delete all shown records from database")
+        rec_to_delete = []
+        for i in 1:size(v.table_data)[1]
+            push!(rec_to_delete, v.table_data[i,1])
+        end
+        
+        DeleteRecords(v, rec_to_delete)
+    end
+end
+
+function DeleteSelecredRecordsButton(v::Global)
+    if length(findall(v.isselected_table_data)) != 0
+        if CImGui.Button("Delete selected records from database")
+            rec_to_delete = []
+            for i in 1:length(v.isselected_table_data)
+                if v.isselected_table_data[i]
+                    push!(rec_to_delete, v.table_data[i,1])
+                end
+            end
+            
+            DeleteRecords(v, rec_to_delete)
+        end
+    end
+end
+
+function ShowRecInformation(v::Global, id)
+    # CImGui.TextDisabled("(i)")
+    # # if v.help_marker_id != id
+    # #     v.need_read = true
+    # # end
+    # if CImGui.IsItemHovered()
+    #     # if v.need_read
+
+    #     #     print("yo")
+
+    #     #     v.need_read = false
+    #     # end
+    #     # CImGui.BeginTooltip()
+    #     # CImGui.PushTextWrapPos(CImGui.GetFontSize() * 100.0)
+    #     # CImGui.TextUnformatted(v.help_marker_data)
+    #     # CImGui.PopTextWrapPos()
+    #     # CImGui.EndTooltip()
+
+    #     println(v.help_marker_id)
+    #     println(id)
+    # end
+end
+
+function RecordsTable(data_for_table::DataFrame, s::Renderer.GR, v::Global)
     CImGui.SetNextWindowPos(ImVec2(s.w/2,0))
     CImGui.SetNextWindowSize(ImVec2(s.w/2, s.h))
     CImGui.Begin("Records")
+
+        N = size(v.data)[1]
+        n = size(v.table_data)[1]
+        CImGui.Text("The number of all entries in database is $N.")
+        if v.current_subject_item != "" || v.current_tag_item != ""
+            CImGui.Text("The number of entries after filtering is $n.")
+        end
+        CImGui.NewLine()
 
         row, col = size(data_for_table);
         nms = names(data_for_table);
@@ -142,7 +222,15 @@ function RecordsTable(data_for_table::DataFrame, s::Renderer.GR)
         CImGui.Separator()
         for r in 1:row
             for c in 1:col
-                CImGui.Text(string(data_for_table[r, c]))
+                # if c == 1
+                #     CImGui.PushID(r)
+                #         ShowRecInformation(v, r)
+                #         v.help_marker_id = r
+                #     CImGui.PopID()
+                #     CImGui.SameLine()
+                # end
+                if CImGui.Selectable(string(data_for_table[r, c]), pointer(v.isselected_table_data)+(r-1)*sizeof(Bool))
+                end
                 CImGui.NextColumn()
             end
         end
@@ -230,6 +318,8 @@ end
 
 function AddNewRecFolderButton(v::Global)
     if CImGui.Button("Add records from folder")
+        Clean(v)
+
         dir = open_dialog_native("Select folder", action = GtkFileChooserAction.SELECT_FOLDER)
         if isdir(dir)
             records = readdir(dir)
@@ -272,7 +362,7 @@ function AddToDBButton(v::Global)
                 if length(replace(v.ancestor_input, "\0" => "")) == 0
                     push!(args, :tag => records[i].tag) 
                 else
-                    push!(args, :tag => [replace(v.ancestor_input, "\0" => ""),records[i].tag]) 
+                    push!(args, :tag => [string(split(v.ancestor_input, "\0")[1]),records[i].tag]) 
                 end
             end
             if records[i].subject != "" push!(args, :subject => records[i].subject) end
@@ -282,6 +372,8 @@ function AddToDBButton(v::Global)
             AddToDatabase.AddToDB_gui_modified(db, args)
         end
         v.is_gui_started = false
+
+        Clean(v)
     end
 end
 
@@ -315,10 +407,12 @@ function SelectFromDB(v::Global)
     else
         v.table_data = DataFrame("recordname" => [], "creation_date" => [])
     end
+    v.isselected_table_data = fill(false, size(v.table_data)[1])
+
 end
 
 function SaveToClipboardButton(v::Global)
-    if CImGui.Button("Save paths to clipboard")
+    if CImGui.Button("Save paths of shown records to clipboard")
         clipboard(v.fullpath_saver)
         v.fullpath_saver = []
     end
@@ -326,12 +420,81 @@ end
 
 function CancelFiltersButton(v::Global)
     if CImGui.SmallButton("Cancel filters")
-        v.current_tag_item = ""
-        v.current_tag_item_id = 0
-        v.current_subject_item = ""
-        v.table_data = v.data
-        v.fullpath_saver = []
+        Clean(v)
     end
+end
+
+function Clean(v::Global)
+    v.current_tag_item = ""
+    v.current_tag_item_id = 0
+    v.current_subject_item = ""
+    v.table_data = v.data
+    v.isselected_table_data = fill(false, size(v.table_data)[1])
+    v.loaded_records = []
+    v.fullpath_saver = []
+end
+
+function DeleteTagButton(v::Global)
+    if v.current_tag_item != ""
+        CImGui.SameLine()
+        if CImGui.SmallButton("delete tag from db")
+            db = SQLite.DB(v.dbpath)
+
+            tag = split(v.current_tag_item, ": ")
+            if length(tag) == 1
+                ancestor = string(tag[1])
+
+                ancestor_id = (DBInterface.execute(db, "SELECT ID FROM Tags WHERE tag_name = '$ancestor'") |> DataFrame)[1,1]
+                DBInterface.execute(db, "DELETE FROM Tags WHERE tag_name = '$ancestor'")
+                DBInterface.execute(db, "DELETE FROM Tags WHERE ID = '$ancestor_id'")
+
+                DBInterface.execute(db, "DELETE FROM Tags WHERE tag_name = '$tag'")
+            else
+                tag = string(tag[2])
+
+                DBInterface.execute(db, "DELETE FROM Tags WHERE tag_name = '$tag'")
+            end
+
+            v.is_gui_started = false
+            Clean(v)
+        end
+    end
+end
+
+function DeleteSubjectButton(v::Global)
+    if v.current_subject_item != ""
+        CImGui.SameLine()
+        if CImGui.SmallButton("delete subject from db")
+            db = SQLite.DB(v.dbpath)
+
+            subj = v.current_subject_item
+            DBInterface.execute(db, "DELETE FROM Subjects WHERE subject_name = '$subj'")
+
+            v.is_gui_started = false
+            Clean(v)
+        end
+    end
+end
+
+function DeleteNewRec(v::Global)
+    if length(findall(v.isselected)) != 0 
+        if CImGui.SmallButton("Delete selected")
+            for i in 1:length(v.isselected)
+                if v.isselected[i]
+                    v.loaded_records[i] = Rec("",DateTime(0),"","","")
+                end
+            end
+            filter!(x -> string(x) != string(Rec("",DateTime(0),"","","")), v.loaded_records)
+            v.isselected = fill(false, length(v.loaded_records))
+        end
+    end
+end
+
+function AncestorInput(v::Global)
+    ShowHelpMarker("(?)", "Материнский тег для записей внутри исследования.")
+    CImGui.SameLine()
+    CImGui.Text("Название исследования:")
+    CImGui.InputText("##ancestor", v.ancestor_input, length(v.ancestor_input))
 end
 
 
@@ -347,28 +510,35 @@ function ui(v::Global, s::Renderer.GR)
         AddToDBButton(v)
 
         CImGui.NewLine()
-        ShowHelpMarker("Материнский тег для записей внутри исследования.")
-        CImGui.SameLine()
-        CImGui.Text("Название исследования:")
-        CImGui.InputText("", v.ancestor_input, length(v.ancestor_input))
-        # if CImGui.IsItemClicked()
-        #     print("yo")
-        #     v.ancestor_input = "\0"^100
-        # end
+        AncestorInput(v)
 
         NewEntriesTable(v)
+        DeleteNewRec(v)
+
         CImGui.NewLine()
         CImGui.NewLine()
-        CImGui.SameLine(s.w/2-290)
-        SaveToClipboardButton(v)
+
+        # CImGui.SameLine(s.w/2-290)
+        # SaveToClipboardButton(v)
         CancelFiltersButton(v)
+
         TagsCombo(v)
+        DeleteTagButton(v)
+
         SubjectsCombo(v)
+        DeleteSubjectButton(v)
+
+        CImGui.NewLine()
+        CImGui.NewLine()
+        SaveToClipboardButton(v)
+        CImGui.NewLine()
+        DeleteAllRecordsButton(v)
+        DeleteSelecredRecordsButton(v)
 
     CImGui.End()
 
    DataLoad(v)
-   RecordsTable(v.table_data, s)
+   RecordsTable(v.table_data, s, v)
 end
 
 function show_gui()
